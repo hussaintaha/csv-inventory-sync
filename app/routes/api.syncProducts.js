@@ -7,6 +7,7 @@ import { graphqlRequest } from "../component/graphqlRequest";
 import { Readable } from "stream";
 import Client from "ssh2-sftp-client";
 import { Readable } from "stream";
+import prisma from "../db.server";
 
 const {
     SFTP_HOST,
@@ -85,11 +86,11 @@ async function parseCsvFromSftp() {
 
 export const loader = async ({ request }) => {
     try {
-        // const shopData = await prisma.session.findMany();
-        const shopData = [{
-            shop: "mjfdah-nh.myshopify.com",
-            accessToken: process.env.SHOPIFY_ACCESS_TOKEN
-        }]
+        const shopData = await prisma.session.findMany();
+        // const shopData = [{
+        //     shop: "mjfdah-nh.myshopify.com",
+        //     accessToken: process.env.SHOPIFY_ACCESS_TOKEN
+        // }]
         console.log('shopData===================>', shopData);
         if (!shopData.length) return json({ message: "No shop data found." });
 
@@ -110,9 +111,12 @@ export const loader = async ({ request }) => {
 
         // return { parseResults, skuMap: Object.entries(skuMap) }
 
+        console.log("parseResults length:", parseResults.length, "  skuMap length:", Object.entries(skuMap).length)
+
         let count = 0;
         for (const [sku, qty] of Object.entries(skuMap)) {
             count++
+            const IS_LOG = count % 500 === 0
             const productSKUQuery = `
                 query ProductVariantsList {
                     productVariants(first: 10, query: "sku:${sku}") {
@@ -144,71 +148,80 @@ export const loader = async ({ request }) => {
 
             const dataOfProductSKU = await graphqlRequest(shopData, productSKUQuery);
             // console.log("data=================>", dataOfProductSKU);
-            console.log("dataOfProductSKU=================>", dataOfProductSKU.data.productVariants.nodes.length);
-            console.log("count----->", count);
+            if (IS_LOG) console.log("dataOfProductSKU=================>", dataOfProductSKU.data.productVariants.nodes.length);
+            if (IS_LOG) console.log("count----->", count);
 
             if (dataOfProductSKU.data.productVariants.nodes.length == 1) {
                 const inventoryItemID = dataOfProductSKU.data.productVariants.nodes[0].inventoryItem.id;
-                const locationID = dataOfProductSKU.data.productVariants.nodes[0].inventoryItem.inventoryLevels.edges[0].node.location.id;
-                const delta = qty - dataOfProductSKU.data.productVariants.nodes[0].inventoryQuantity;
-                console.log("inventoryItemID=================>", inventoryItemID);
-                console.log("locationID=================>", locationID);
-                console.log("delta=================>", delta);
-                if (delta) {
-                    console.log("Delta is not zero, updating inventory...");
+                const inventoryLevels = dataOfProductSKU.data.productVariants.nodes[0].inventoryItem.inventoryLevels.edges;
+                if (inventoryLevels.length) {
+                    const locationID = inventoryLevels[0].node.location.id;
+                    const delta = qty - dataOfProductSKU.data.productVariants.nodes[0].inventoryQuantity;
+                    if (IS_LOG) console.log("inventoryItemID=================>", inventoryItemID);
+                    if (IS_LOG) console.log("locationID=================>", locationID);
+                    if (IS_LOG) console.log("delta=================>", delta);
+                    if (delta) {
+                        if (IS_LOG) console.log("Delta is not zero, updating inventory...");
+                    } else {
+                        if (IS_LOG) console.log("Delta is zero, no need to update inventory.");
+                    }
+
+
+                    if (locationID) {
+
+                        const inventoryAdjustmentMutation = `
+                        mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!) {
+                            inventoryAdjustQuantities(input: $input) {
+                                userErrors {
+                                    field
+                                    message
+                                }
+                                inventoryAdjustmentGroup {
+                                    createdAt
+                                    reason
+                                    changes {
+                                        name
+                                        delta
+                                    }
+                                }
+                            }
+                        }
+                    `;
+
+                        await graphqlRequest(shopData, inventoryAdjustmentMutation, {
+                            variables: {
+                                input: {
+                                    reason: "correction",
+                                    name: "available",
+                                    changes: [
+                                        {
+                                            delta,
+                                            inventoryItemId: inventoryItemID,
+                                            locationId: locationID
+                                        }
+                                    ]
+                                }
+                            }
+                        });
+                    }
                 } else {
-                    console.log("Delta is zero, no need to update inventory.");
+                    console.warn(`No inventoryLevels found for SKU: ${sku}`);
                 }
 
-
-                // if (locationID) {
-
-                //     const inventoryAdjustmentMutation = `
-                //         mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!) {
-                //             inventoryAdjustQuantities(input: $input) {
-                //                 userErrors {
-                //                     field
-                //                     message
-                //                 }
-                //                 inventoryAdjustmentGroup {
-                //                     createdAt
-                //                     reason
-                //                     changes {
-                //                         name
-                //                         delta
-                //                     }
-                //                 }
-                //             }
-                //         }
-                //     `;
-
-                //     await graphqlRequest(shopData, inventoryAdjustmentMutation, {
-                //         variables: {
-                //             input: {
-                //                 reason: "correction",
-                //                 name: "available",
-                //                 changes: [
-                //                     {
-                //                         delta,
-                //                         inventoryItemId: inventoryItemID,
-                //                         locationId: locationID
-                //                     }
-                //                 ]
-                //             }
-                //         }
-                //     });
-                // }
             } else if (dataOfProductSKU.data.productVariants.nodes.length > 1) {
-                console.log("Multiple variants found hence not updating quantity for SKU:", sku);
+                if (IS_LOG) console.log("Multiple variants found hence not updating quantity for SKU:", sku);
             } else {
-                console.log("No variant found for SKU:", sku);
+                if (IS_LOG) console.log("No variant found for SKU:", sku);
             }
         }
 
         return { success: true };
     } catch (error) {
-        console.error("error reading CSV:", error);
-        return { error: error.message }, { status: 500 };
+        console.error("error reading CSV from api.syncProducts:", error);
+        return new Response(
+            JSON.stringify({ error: error, message: "error reading CSV from api.syncProducts" }),
+            { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
     }
 };
 
