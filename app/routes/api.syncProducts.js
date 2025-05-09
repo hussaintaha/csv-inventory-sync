@@ -6,7 +6,6 @@ import { finished } from "stream/promises";
 import { graphqlRequest } from "../component/graphqlRequest";
 import { Readable } from "stream";
 import Client from "ssh2-sftp-client";
-import { Readable } from "stream";
 import prisma from "../db.server";
 
 const {
@@ -92,7 +91,7 @@ export const loader = async ({ request }) => {
         //     accessToken: process.env.SHOPIFY_ACCESS_TOKEN
         // }]
         console.log('shopData===================>', shopData);
-        if (!shopData.length) return json({ message: "No shop data found." });
+        if (!shopData.length) return { message: "No shop data found." };
 
         const parseResults = await parseCsvFromSftp();
 
@@ -161,9 +160,9 @@ export const loader = async ({ request }) => {
                     if (IS_LOG) console.log("locationID=================>", locationID);
                     if (IS_LOG) console.log("delta=================>", delta);
                     if (delta) {
-                        if (IS_LOG) console.log("Delta is not zero, updating inventory...");
+                        if (IS_LOG) console.log("Delta is not zero, updating inventory of sku...",sku);
                     } else {
-                        if (IS_LOG) console.log("Delta is zero, no need to update inventory.");
+                        if (IS_LOG) console.log("Delta is zero, no need to update inventory of sku....",sku);
                     }
 
 
