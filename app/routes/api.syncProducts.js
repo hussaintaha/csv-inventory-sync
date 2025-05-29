@@ -160,9 +160,9 @@ export const loader = async ({ request }) => {
                     if (IS_LOG) console.log("locationID=================>", locationID);
                     if (IS_LOG) console.log("delta=================>", delta);
                     if (delta) {
-                        if (IS_LOG) console.log("Delta is not zero, updating inventory of sku...",sku);
+                        if (IS_LOG) console.log("Delta is not zero, updating inventory of sku...", sku);
                     } else {
-                        if (IS_LOG) console.log("Delta is zero, no need to update inventory of sku....",sku);
+                        if (IS_LOG) console.log("Delta is zero, no need to update inventory of sku....", sku);
                     }
 
 
@@ -213,6 +213,7 @@ export const loader = async ({ request }) => {
                 if (IS_LOG) console.log("No variant found for SKU:", sku);
             }
         }
+        console.log(`All SKUs have been processed successfully from the SFTP server CSV file! [${new Date().toLocaleString()}]`);
 
         return { success: true };
     } catch (error) {
